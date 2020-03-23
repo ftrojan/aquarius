@@ -647,6 +647,13 @@ def station_label(station: pd.Series) -> str:
     return stlabel
 
 
+def nice_ylim(y: float) -> float:
+    """Guess the ylim which is proportional to the value."""
+    step = 10.0 ** np.round(np.log10(0.1*y))
+    ub = step * np.ceil(y / step)
+    return ub
+
+
 def cum_prcp_plot(
         stlabel: str,
         rdf: pd.DataFrame,
@@ -655,7 +662,7 @@ def cum_prcp_plot(
 ):
     f = plt.figure(figsize=(12, 12))
     if not rdf.empty:
-        prcp_ub = 500 * np.ceil(rdf['prcp_max'].iloc[-1] / 500)
+        prcp_ub = nice_ylim(rdf['prcp_max'].iloc[-1])
         plt.fill_between(x=rdf['dateto'], y1=0, y2=rdf['prcp_min'], color='red', linewidth=0.0, alpha=0.5)
         plt.fill_between(x=rdf['dateto'], y1=rdf['prcp_min'], y2=rdf['prcp_p25'], color='orange', linewidth=0.0, alpha=0.5)
         plt.fill_between(x=rdf['dateto'], y1=rdf['prcp_p25'], y2=rdf['prcp_p75'], color='green', linewidth=0.0, alpha=0.5)
