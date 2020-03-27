@@ -21,7 +21,7 @@ from dfply import (
     arrange
 )
 from tqdm import tqdm
-from typing import Dict, List
+from typing import Dict, List, Optional
 from geopy.distance import geodesic
 from sqlalchemy import create_engine
 import matplotlib.pyplot as plt
@@ -34,16 +34,30 @@ class ECDF:
         self.x_values = None
         self.cdf_values = None
 
-    def fit(self, xdata: np.ndarray):
-        values, counts = np.unique(xdata, return_counts=True)
-        sort_index = np.argsort(values)
-        self.x_values = values[sort_index]
-        self.cdf_values = np.cumsum(counts[sort_index])/np.sum(counts)
+    def fit(self, xdata: np.ndarray, weights: Optional[np.ndarray] = None):
+        if weights is None:
+            values, counts = np.unique(xdata, return_counts=True)
+            sort_index = np.argsort(values)
+            self.x_values = values[sort_index]
+            self.cdf_values = (np.cumsum(counts[sort_index]) - 0.5)/np.sum(counts)
+        else:
+            sorter = np.argsort(xdata)
+            values = xdata[sorter]
+            sample_weight = weights[sorter]
+            weighted_quantiles = (np.cumsum(sample_weight) - 0.5 * sample_weight) / np.sum(sample_weight)
+            unique_values, unique_index, unique_counts = np.unique(values, return_index=True, return_counts=True)
+            self.x_values = unique_values
+            self.cdf_values = weighted_quantiles[unique_index + unique_counts - 1]  # last index instead of first index
         return self
 
     def eval(self, x: np.ndarray):
         cdf = np.interp(x, xp=self.x_values, fp=self.cdf_values, left=0, right=1)
         return cdf
+
+    def quantile(self, q: np.ndarray):
+        assert np.all(q >= 0) and np.all(q <= 1), 'quantiles should be in [0, 1]'
+        xq = np.interp(q, xp=self.cdf_values, fp=self.x_values, left=self.x_values[0], right=self.x_values[-1])
+        return xq
 
 
 def download_ghcn_file(ftp_filename: str, save_dir: str):
@@ -591,19 +605,32 @@ def calc_reference_station(prcp: pd.DataFrame) -> pd.DataFrame:
 
 
 def reference_quantiles(reference: pd.DataFrame) -> pd.DataFrame:
-    q = reference >> group_by(X.day_index) >> summarize(
-        prcp_min=X.reference_prcp.min(),
-        prcp_p25=X.reference_prcp.quantile(0.25),
-        prcp_p50=X.reference_prcp.quantile(0.50),
-        prcp_p75=X.reference_prcp.quantile(0.75),
-        prcp_max=X.reference_prcp.max(),
-        fill_min=X.cum_fillrate.min(),
-        fill_p25=X.cum_fillrate.quantile(0.25),
-        fill_p50=X.cum_fillrate.quantile(0.50),
-        fill_p75=X.cum_fillrate.quantile(0.75),
-        fill_max=X.cum_fillrate.max(),
-    )
-    return q
+    qq = np.array([0.00, 0.25, 0.50, 0.75, 1.00])
+    cdf_prcp = ECDF()
+    cdf_fill = ECDF()
+    qlist = []
+    for day_index, gref in reference.groupby('day_index'):
+        cdf_prcp.fit(gref['reference_prcp'], weights=gref['cum_fillrate'])
+        qprcp = cdf_prcp.quantile(qq)
+        cdf_fill.fit(gref['cum_fillrate'])
+        qfill = cdf_fill.quantile(qq)
+        row = (day_index, *qprcp, *qfill)
+        qlist.append(row)
+    cols = [
+        'day_index',
+        'prcp_min',
+        'prcp_p25',
+        'prcp_p50',
+        'prcp_p75',
+        'prcp_max',
+        'fill_min',
+        'fill_p25',
+        'fill_p50',
+        'fill_p75',
+        'fill_max',
+    ]
+    qdf = pd.DataFrame(qlist, columns=cols)
+    return qdf
 
 
 def calc_reference_quantiles(prcp: pd.DataFrame) -> pd.DataFrame:
