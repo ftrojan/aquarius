@@ -616,10 +616,14 @@ def reference_quantiles(reference: pd.DataFrame) -> pd.DataFrame:
     cdf_fill = ECDF()
     qlist = []
     for day_index, gref in reference.groupby('day_index'):
-        cdf_prcp.fit(gref['reference_prcp'], weights=gref['cum_fillrate'])
-        qprcp = cdf_prcp.quantile(qq)
-        cdf_fill.fit(gref['cum_fillrate'])
-        qfill = cdf_fill.quantile(qq)
+        if gref.empty or gref['reference_prcp'].notnull().sum() == 0:
+            qprcp = np.full(5, np.nan)
+            qfill = np.full(5, np.nan)
+        else:
+            cdf_prcp.fit(gref['reference_prcp'], weights=gref['cum_fillrate'])
+            qprcp = cdf_prcp.quantile(qq)
+            cdf_fill.fit(gref['cum_fillrate'])
+            qfill = cdf_fill.quantile(qq)
         row = (day_index, *qprcp, *qfill)
         qlist.append(row)
     cols = [
@@ -811,6 +815,11 @@ def get_station_ids_by_name(name: str, stations: pd.DataFrame) -> List[str]:
             flag_continent = stations['continent_name'] == name
             station_ids = stid[flag_continent]
     return station_ids
+
+
+def sql_engine():
+    engine = create_engine('postgres://postgres:@localhost/ghcn')
+    return engine
 
 
 logfmt = '%(asctime)s - %(levelname)s - %(module)s.%(funcName)s#%(lineno)d - %(message)s'
