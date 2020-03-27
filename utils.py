@@ -36,14 +36,20 @@ class ECDF:
 
     def fit(self, xdata: np.ndarray, weights: Optional[np.ndarray] = None):
         if weights is None:
-            values, counts = np.unique(xdata, return_counts=True)
+            ind_valid = ~np.isnan(xdata)
+            xv = xdata[ind_valid]
+            values, counts = np.unique(xv, return_counts=True)
             sort_index = np.argsort(values)
             self.x_values = values[sort_index]
             self.cdf_values = (np.cumsum(counts[sort_index]) - 0.5)/np.sum(counts)
         else:
-            sorter = np.argsort(xdata)
-            values = xdata[sorter]
-            sample_weight = weights[sorter]
+            assert len(xdata) == len(weights)
+            ind_valid = ~np.isnan(xdata) & ~np.isnan(weights)
+            xv = xdata[ind_valid]
+            wv = weights[ind_valid]
+            sorter = np.argsort(xv)
+            values = xv[sorter]
+            sample_weight = wv[sorter]
             weighted_quantiles = (np.cumsum(sample_weight) - 0.5 * sample_weight) / np.sum(sample_weight)
             unique_values, unique_index, unique_counts = np.unique(values, return_index=True, return_counts=True)
             self.x_values = unique_values
@@ -590,7 +596,7 @@ def calc_reference_station_year(prcp: pd.DataFrame, year: int) -> pd.DataFrame:
     cum_days_available = np.arange(1, len(ref)+1)
     ref['cum_fillrate'] = cum_days_observed / cum_days_available
     ref['reference_prcp'] = ref['cum_prcp'] / ref['cum_fillrate']
-    ref.at[ref['cum_fillrate'] < 0.8, 'reference_prcp'] = np.nan
+    # ref.at[ref['cum_fillrate'] < 0.8, 'reference_prcp'] = np.nan
     return ref
 
 
