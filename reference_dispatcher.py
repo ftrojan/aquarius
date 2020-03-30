@@ -40,28 +40,27 @@ def complete_station(job: pd.DataFrame, station_completed: str) -> pd.DataFrame:
 
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format=utils.logfmt,
     handlers=[logging.StreamHandler()],
 )
 HOST = ''
 PORT = 50007
 engine = utils.sql_engine()
-stations_todo = utils.get_stations_noref(engine).head(100)
+stations_todo = utils.get_stations_noref(engine)
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((HOST, PORT))
     logging.debug(f"server listening on {HOST} {PORT}, {len(stations_todo)} stations todo")
     while stations_todo['dispatched_at'].isnull().sum() > 0:  # after one request is served, listen for another one
-        s.listen(10)
+        s.listen(1)
         conn, addr = s.accept()
         with conn:
             logging.debug(f"Connected by {addr}")
             while True:  # until the socket is terminated by the worker
                 num_todo = stations_todo['dispatched_at'].isnull().sum()
-                logging.debug(f"{num_todo} stations todo")
+                logging.info(f"{num_todo} stations todo")
                 reqdata = conn.recv(1024)
                 if not reqdata:
-                    logging.debug(f"break")
                     break
                 request = json.loads(reqdata.decode('utf-8'))
                 logging.debug(f"received request={request}")
