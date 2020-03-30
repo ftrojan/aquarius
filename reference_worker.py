@@ -1,58 +1,48 @@
+"""Worker asks for a station to calculate, calculates, saves to db and asks again, until gets input"""
 import socket
+import json
 import logging
-from time import sleep
 import utils
 
 
-class ClientObject:
-
-    def __init__(self, host_address, server_port, port=0):
-        self._server = (host_address, server_port)
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind((host_address, port))
-
-    def handshake(self):
-        logging.debug('sending marco')
-        self.socket.sendto('marco'.encode(encoding='utf-8'), self._server)
-        sleep(.1)
-        self.socket.sendto('marco'.encode(encoding='utf-8'), self._server)
-        while True:
-            if str(self.socket.recvfrom(1024)[0]) == 'polo':
-                break
-        # self._s.sendto('marco',self._server)
-        # self._s.sendto('marco',self._server)
-        logging.debug(' connection verified')
-        self.socket.sendto('confirm'.encode(encoding='utf-8'), self._server)
-        self.socket.setblocking(0)
-        return True
-
-    def recieve(self, mode = 0):
-        _data, _addr = self.socket.recvfrom(1024)
-        if mode == 0:
-            return str(_data)
-        if mode == 1:
-            return int(_data)
-        if mode == 2:
-            return float(_data)
-        if mode == 3:
-            return tuple(_data)
-
-    def send(self, data):
-        self.socket.sendto(str(data).encode(encoding='utf-8'), self._server)
-
-    def close(self):
-        self.socket.close()
-        logging.debug('_socket closed_')
+def get_response(request_dict: dict) -> dict:
+    request = json.dumps(request_dict).encode('utf-8')
+    logging.debug(f"sending request={request_dict}")
+    s.sendall(request)
+    response = s.recv(1024)
+    response_dict = json.loads(response.decode('utf-8'))
+    return response_dict
 
 
-if __name__ == '__main__':
-    logging.basicConfig(
+def dowork(station_id: str):
+    prcp = utils.df_station(station_id)
+    if not prcp.empty:
+        refq = utils.calc_reference_quantiles(prcp)
+        if not refq.empty:
+            utils.insert_with_progress(refq, engine, table_name='reference', chunksize=2000)
+    return
+
+
+logging.basicConfig(
         level=logging.DEBUG,
         format=utils.logfmt,
         handlers=[logging.StreamHandler()],
     )
-    host = '127.0.0.1'
-    talk = ClientObject(host, server_port=6003, port=6004)
-    talk.handshake()
-    # while True:
-        # print talk.recieve()
+HOST = '127.0.0.1'
+PORT = 50007
+engine = utils.sql_engine()
+stop = False
+while not stop:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((HOST, PORT))
+        todo = get_response({'command': 'get_station'})
+        logging.debug(f'response={todo}')
+        station = todo['station']
+        if station:
+            dowork(station)
+            saved = get_response({'command': 'complete_station', 'station': station})
+            logging.debug(f'response={saved}')
+            stop = False
+        else:
+            stop = True
+logging.debug("completed")

@@ -615,7 +615,8 @@ def reference_quantiles(reference: pd.DataFrame) -> pd.DataFrame:
     cdf_prcp = ECDF()
     cdf_fill = ECDF()
     qlist = []
-    for day_index, gref in reference.groupby('day_index'):
+    keys = ['station', 'day_index']
+    for gkeys, gref in reference.groupby(keys):
         if gref.empty or gref['reference_prcp'].notnull().sum() == 0:
             qprcp = np.full(5, np.nan)
             qfill = np.full(5, np.nan)
@@ -624,10 +625,10 @@ def reference_quantiles(reference: pd.DataFrame) -> pd.DataFrame:
             qprcp = cdf_prcp.quantile(qq)
             cdf_fill.fit(gref['cum_fillrate'])
             qfill = cdf_fill.quantile(qq)
-        row = (day_index, *qprcp, *qfill)
+        row = (*gkeys, *qprcp, *qfill)
         qlist.append(row)
     cols = [
-        'day_index',
+        *keys,
         'prcp_min',
         'prcp_p25',
         'prcp_p50',
@@ -639,7 +640,7 @@ def reference_quantiles(reference: pd.DataFrame) -> pd.DataFrame:
         'fill_p75',
         'fill_max',
     ]
-    qdf = pd.DataFrame(qlist, columns=cols)
+    qdf = pd.DataFrame(qlist, columns=cols).set_index(keys)
     return qdf
 
 
@@ -820,6 +821,17 @@ def get_station_ids_by_name(name: str, stations: pd.DataFrame) -> List[str]:
 def sql_engine():
     engine = create_engine('postgres://postgres:@localhost/ghcn')
     return engine
+
+
+def get_stations_noref(engine) -> pd.DataFrame:
+    cols = ['station', 'dispatched_at', 'completed_at']
+    sql_noref = (
+        f"select {', '.join(cols)}\n"
+        "from reference_job\n"
+        "where completed_at is null"
+    )
+    station_noref = pd.DataFrame(engine.execute(sql_noref).fetchall(), columns=cols).set_index('station')
+    return station_noref
 
 
 logfmt = '%(asctime)s - %(levelname)s - %(module)s.%(funcName)s#%(lineno)d - %(message)s'
