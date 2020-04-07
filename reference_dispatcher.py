@@ -50,7 +50,7 @@ engine = utils.sql_engine()
 stations_todo = utils.get_stations_noref(engine)
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((HOST, PORT))
-    logging.debug(f"server listening on {HOST} {PORT}, {len(stations_todo)} stations todo")
+    logging.info(f"server listening on {HOST} {PORT}, {len(stations_todo)} stations todo")
     while stations_todo['dispatched_at'].isnull().sum() > 0:  # after one request is served, listen for another one
         s.listen(1)
         conn, addr = s.accept()

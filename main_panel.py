@@ -23,6 +23,7 @@ autocomplete = pn.widgets.AutocompleteInput(
     name='Autocomplete Input', options=options,
     placeholder='Station, Country or Continent')
 input_year = pn.widgets.TextInput(name='Year', value=str(current_year))
+engine = utils.sql_engine()
 
 
 @pn.depends(autocomplete.param.value, input_year.param.value)
@@ -33,7 +34,9 @@ def p_drought_plot(autocomplete_value: str, year_value: str):
         if len(stids) > 0:
             stid = stids[0]
             stlabel = utils.station_label(stations.loc[stid, :])
-            rdf, cprcp, curr_drought_rate, curr_fillrate, curr_fillrate_cdf = utils.drought_rate_data(stid, year)
+            logging.debug(f"calling drought_rate_data with stid={stid} and year={year}")
+            rdf, cprcp, curr_drought_rate, curr_fillrate, curr_fillrate_cdf = \
+                utils.drought_rate_data(stid, year, engine=engine)
             f_prcp = utils.cum_prcp_plot(stlabel, rdf, cprcp, curr_drought_rate)
             dft = totals.loc[totals['station'] == stid, :]
             f_totals = utils.totals_barchart(dft)

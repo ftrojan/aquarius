@@ -557,8 +557,9 @@ def get_nearest_stations() -> Dict[str, list]:
     return nearest
 
 
-def df_station(station: str) -> pd.DataFrame:
-    engine = create_engine('postgresql://postgres:@localhost/ghcn')
+def df_station(station: str, engine=None) -> pd.DataFrame:
+    if engine is None:
+        engine = create_engine('postgresql://postgres:@localhost/ghcn')
     q = engine.execute(f"select * from prcp where station='{station}' order by dateto").fetchall()
     df = pd.DataFrame(q, columns=['station', 'dateto', 'prcp_mm'])
     return df.set_index(['station', 'dateto'])
@@ -652,6 +653,27 @@ def calc_reference_quantiles(prcp: pd.DataFrame) -> pd.DataFrame:
     return q
 
 
+def load_reference_quantiles(station: str, engine) -> pd.DataFrame:
+    """Load reference quantiles from database."""
+    q = engine.execute(f"select * from reference where station='{station}'").fetchall()
+    cols = [
+        'station',
+        'day_index',
+        'prcp_min',
+        'prcp_p25',
+        'prcp_p50',
+        'prcp_p75',
+        'prcp_max',
+        'fill_min',
+        'fill_p25',
+        'fill_p50',
+        'fill_p75',
+        'fill_max',
+    ]
+    df = pd.DataFrame(q, columns=cols).set_index(keys=['station', 'day_index'])
+    return df
+
+
 def calc_cumprcp(prcp: pd.DataFrame, year: int) -> pd.DataFrame:
     data_end_date = prcp.index.get_level_values('dateto')[-1]
     cprcp = calc_reference_station_year(prcp, year)
@@ -661,25 +683,30 @@ def calc_cumprcp(prcp: pd.DataFrame, year: int) -> pd.DataFrame:
 
 
 def current_drought_rate(refq: pd.DataFrame, curr_cprcp: pd.Series) -> float:
-    curr_day_index = curr_cprcp['day_index']
-    curr_ytd_prcp = curr_cprcp['ytd_prcp']
-    refq_columns = ['prcp_min', 'prcp_p25', 'prcp_p50', 'prcp_p75', 'prcp_max']
-    refq_prcp = refq.loc[refq['day_index'] == curr_day_index, refq_columns].values
-    if len(refq_prcp) > 0:
-        cdf = ECDF()
-        cdf.fit(refq_prcp.flatten())
-        curr_cdf = cdf.eval(curr_ytd_prcp)
-        curr_drought_rate = 2 * (0.5 - curr_cdf)
-    else:
+    if refq.empty:
         curr_drought_rate = np.nan
+    else:
+        curr_station = refq.index[0][0]
+        curr_day_index = curr_cprcp['day_index']
+        curr_ytd_prcp = curr_cprcp['ytd_prcp']
+        refq_columns = ['prcp_min', 'prcp_p25', 'prcp_p50', 'prcp_p75', 'prcp_max']
+        refq_prcp = refq.loc[(curr_station, curr_day_index), refq_columns].values
+        if len(refq_prcp) > 0:
+            cdf = ECDF()
+            cdf.fit(refq_prcp.flatten())
+            curr_cdf = cdf.eval(curr_ytd_prcp)
+            curr_drought_rate = 2 * (0.5 - curr_cdf)
+        else:
+            curr_drought_rate = np.nan
     return curr_drought_rate
 
 
 def current_fillrate_cdf(refq: pd.DataFrame, curr_cprcp: pd.Series) -> float:
+    curr_station = refq.index[0][0]
     curr_day_index = curr_cprcp['day_index']
     curr_fillrate = curr_cprcp['cum_fillrate']
     refq_columns = ['fill_min', 'fill_p25', 'fill_p50', 'fill_p75', 'fill_max']
-    ref_fillrate = refq.loc[refq['day_index'] == curr_day_index, refq_columns].values
+    ref_fillrate = refq.loc[(curr_station, curr_day_index), refq_columns].values
     if len(ref_fillrate) > 0:
         cdf = ECDF()
         cdf.fit(ref_fillrate.flatten())
@@ -709,7 +736,7 @@ def cum_prcp_plot(
         curr_drought_rate: float
 ):
     f = plt.figure(figsize=(12, 12))
-    if not rdf.empty:
+    if not rdf.empty and rdf['prcp_min'].notnull().sum() > 0:
         prcp_ub = nice_ylim(rdf['prcp_max'].iloc[-1])
         plt.fill_between(x=rdf['dateto'], y1=0, y2=rdf['prcp_min'], color='red', linewidth=0.0, alpha=0.5)
         plt.fill_between(x=rdf['dateto'], y1=rdf['prcp_min'], y2=rdf['prcp_p25'], color='orange', linewidth=0.0, alpha=0.5)
@@ -777,19 +804,26 @@ def totals_barchart(dfy: pd.DataFrame):
     return f
 
 
-def drought_rate_data(stid: str, year: int) -> tuple:
-    prcp = df_station(stid)
+def drought_rate_data(stid: str, year: int, engine=None) -> tuple:
+    prcp = df_station(stid, engine)
     if not prcp.empty:
-        refq = calc_reference_quantiles(prcp)
+        if engine is None:
+            refq = calc_reference_quantiles(prcp)
+        else:
+            refq = load_reference_quantiles(stid, engine)
         data_end_date = prcp.index.get_level_values('dateto')[-1]
         day_index = make_day_index(year)
         rdf = day_index.merge(refq, on='day_index', how='left') >> mask(X.dateto <= data_end_date)
         cprcp = calc_cumprcp(prcp, year)
         if not cprcp.empty:
             curr_cprcp = cprcp.iloc[-1, :]
-            curr_drought_rate = current_drought_rate(refq, curr_cprcp)
             curr_fillrate = curr_cprcp['cum_fillrate']
-            curr_fillrate_cdf = current_fillrate_cdf(refq, curr_cprcp)
+            if refq.empty:
+                curr_drought_rate = np.nan
+                curr_fillrate_cdf = np.nan
+            else:
+                curr_drought_rate = current_drought_rate(refq, curr_cprcp)
+                curr_fillrate_cdf = current_fillrate_cdf(refq, curr_cprcp)
         else:
             curr_drought_rate = np.nan
             curr_fillrate = np.nan
