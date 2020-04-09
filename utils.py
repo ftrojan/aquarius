@@ -292,7 +292,7 @@ def update_drought(df_running: pd.DataFrame, df_update: pd.DataFrame, calendar: 
         logging.debug(f"preceding_delta_days={preceding_delta_days}")
         if (recent_delta_days > 0) or (preceding_delta_days > 0):
             logging.debug("proceeding")
-            df_station = df_running[['station']].copy()
+            df_base = df_running[['station']].copy()
             df_update_recent = calendar_recent >> \
                 left_join(df_update, by='dateto') >> \
                 group_by(X.station) >> \
@@ -301,7 +301,7 @@ def update_drought(df_running: pd.DataFrame, df_update: pd.DataFrame, calendar: 
                     recent_precipitation_mm=X.prcp.sum()/10,
                 )
             if df_update_recent.shape[0] == 0:  # df_update does not intersect recent window
-                df_update_recent = df_station.copy()
+                df_update_recent = df_base.copy()
                 df_update_recent['recent_days_observed'] = 0
                 df_update_recent['recent_precipitation_mm'] = 0.0
             # logging.debug(df_update_recent.head())
@@ -313,25 +313,25 @@ def update_drought(df_running: pd.DataFrame, df_update: pd.DataFrame, calendar: 
                     preceding_precipitation_mm=X.prcp.sum()/10
                 )
             if df_update_preceding.shape[0] == 0:  # df_update does not intersect preceding window
-                df_update_preceding = df_station.copy()
+                df_update_preceding = df_base.copy()
                 df_update_preceding['preceding_days_observed'] = 0
                 df_update_preceding['preceding_precipitation_mm'] = 0.0
             # logging.debug(df_update_preceding.head())
-            df_delta = df_station.copy() >> \
+            df_delta = df_base.copy() >> \
                 left_join(df_update_recent, by='station') >> \
                 left_join(df_update_preceding, by='station')
             df_delta.fillna(value=0, inplace=True)
             assert df_delta.shape[0] == df_running.shape[0]
-            recent_time_window_days = df_running['recent_time_window_days'] + recent_delta_days
-            preceding_time_window_days = df_running['preceding_time_window_days'] + preceding_delta_days
-            recent_days_observed = df_running['recent_days_observed'] + df_delta['recent_days_observed']
-            preceding_days_observed = df_running['preceding_days_observed'] + df_delta['preceding_days_observed']
+            recent_time_window_days = df_running.recent_time_window_days + recent_delta_days
+            preceding_time_window_days = df_running.preceding_time_window_days + preceding_delta_days
+            recent_days_observed = df_running.recent_days_observed + df_delta.recent_days_observed
+            preceding_days_observed = df_running.preceding_days_observed + df_delta.preceding_days_observed
             recent_fill_rate = recent_days_observed / recent_time_window_days
             preceding_fill_rate = preceding_days_observed / preceding_time_window_days
-            recent_precipitation_mm = df_running['recent_precipitation_mm'] + df_delta['recent_precipitation_mm']
-            preceding_precipitation_mm = df_running['preceding_precipitation_mm'] + df_delta['preceding_precipitation_mm']
+            recent_precipitation_mm = df_running.ecent_precipitation_mm + df_delta.recent_precipitation_mm
+            preceding_precipitation_mm = df_running.preceding_precipitation_mm + df_delta.preceding_precipitation_mm
             recent_precipitation_annual_mean = recent_precipitation_mm / recent_days_observed * 365
-            preceding_precipitation_annual_mean = preceding_precipitation_mm / preceding_days_observed * 365
+            preceding_prcp_annual_mean = preceding_precipitation_mm / preceding_days_observed * 365
             df_running['recent_time_window_days'] = recent_time_window_days
             df_running['recent_days_observed'] = recent_days_observed
             df_running['recent_fill_rate'] = recent_fill_rate
@@ -341,9 +341,9 @@ def update_drought(df_running: pd.DataFrame, df_update: pd.DataFrame, calendar: 
             df_running['preceding_days_observed'] = preceding_days_observed
             df_running['preceding_fill_rate'] = preceding_fill_rate
             df_running['preceding_precipitation_mm'] = preceding_precipitation_mm
-            df_running['preceding_precipitation_annual_mean'] = preceding_precipitation_annual_mean
+            df_running['preceding_precipitation_annual_mean'] = preceding_prcp_annual_mean
             df_running['dq_flag'] = (recent_fill_rate >= 0.90) & (preceding_fill_rate >= 0.80)
-            df_running['drought_index'] = 100*(1 - recent_precipitation_annual_mean / preceding_precipitation_annual_mean)
+            df_running['drought_index'] = 100*(1 - recent_precipitation_annual_mean / preceding_prcp_annual_mean)
         else:
             logging.debug("skipping")
     else:
@@ -454,16 +454,16 @@ def chunker(seq, size):
     return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
 
-def insert_with_progress(df, sql_engine, table_name: str, chunksize=None):
+def insert_with_progress(df, engine, table_name: str, chunksize=None):
     if chunksize is None:
         chunksize = int(len(df) / 10)  # 10%
     with tqdm(total=len(df)) as pbar:
         for i, cdf in enumerate(chunker(df, chunksize)):
-            cdf.to_sql(con=sql_engine, name=table_name, if_exists="append")
+            cdf.to_sql(con=engine, name=table_name, if_exists="append")
             pbar.update(chunksize)
 
 
-def extract_one_prcp_to_sql(filename: str, by_year_path: str, sql_engine, table_name: str):
+def extract_one_prcp_to_sql(filename: str, by_year_path: str, engine, table_name: str):
     keys = ['station', 'dateto']
     df = df_file(filename, by_year_path)
     logging.debug(f"dateframe {df.shape} loaded")
@@ -477,7 +477,7 @@ def extract_one_prcp_to_sql(filename: str, by_year_path: str, sql_engine, table_
         f"where dateto between '{dmin}' and '{dmax}'\n"
         "order by station, dateto"
     )
-    df_mirror = pd.DataFrame(sql_engine.execute(sql_mirror).fetchall(), columns=keys).set_index(keys)
+    df_mirror = pd.DataFrame(engine.execute(sql_mirror).fetchall(), columns=keys).set_index(keys)
     df_mirror['indb'] = True
     logging.debug(f"mirror data {df_mirror.shape} extracted")
     if df_mirror.shape[0] == 0:
@@ -490,18 +490,18 @@ def extract_one_prcp_to_sql(filename: str, by_year_path: str, sql_engine, table_
         df_filtered = df_joined >> mask(~X.indb)
         df_increment = df_filtered >> select(X.prcp_mm)
         logging.debug("sql insert in progress")
-        insert_with_progress(df_increment, sql_engine, table_name, chunksize=100)
+        insert_with_progress(df_increment, engine, table_name, chunksize=100)
         logging.debug("insert completed")
     else:
         logging.debug("increment is empty")
 
 
-def extract_all_prcp_to_sql(by_year_path: str, sql_engine, table_name: str):
+def extract_all_prcp_to_sql(by_year_path: str, engine, table_name: str):
     files = sorted(os.listdir(by_year_path))
     nfiles = len(files)
     for i, filename in enumerate(files):
         logging.debug(f"{i + 1}/{nfiles} {filename}")
-        extract_one_prcp_to_sql(filename, by_year_path, sql_engine, table_name)
+        extract_one_prcp_to_sql(filename, by_year_path, engine, table_name)
     logging.debug("extract completed")
 
 
@@ -738,12 +738,13 @@ def cum_prcp_plot(
     f = plt.figure(figsize=(12, 12))
     if not rdf.empty and rdf['prcp_min'].notnull().sum() > 0:
         prcp_ub = nice_ylim(rdf['prcp_max'].iloc[-1])
-        plt.fill_between(x=rdf['dateto'], y1=0, y2=rdf['prcp_min'], color='red', linewidth=0.0, alpha=0.5)
-        plt.fill_between(x=rdf['dateto'], y1=rdf['prcp_min'], y2=rdf['prcp_p25'], color='orange', linewidth=0.0, alpha=0.5)
-        plt.fill_between(x=rdf['dateto'], y1=rdf['prcp_p25'], y2=rdf['prcp_p75'], color='green', linewidth=0.0, alpha=0.5)
-        plt.fill_between(x=rdf['dateto'], y1=rdf['prcp_p75'], y2=rdf['prcp_max'], color='cyan', linewidth=0.0, alpha=0.5)
-        plt.fill_between(x=rdf['dateto'], y1=rdf['prcp_max'], y2=prcp_ub, color='blue', linewidth=0.0, alpha=0.5)
-        plt.plot(rdf['dateto'], rdf['prcp_p50'], c='grey')
+        xx = rdf['dateto']
+        plt.fill_between(x=xx, y1=0, y2=rdf['prcp_min'], color='red', linewidth=0.0, alpha=0.5)
+        plt.fill_between(x=xx, y1=rdf['prcp_min'], y2=rdf['prcp_p25'], color='orange', linewidth=0.0, alpha=0.5)
+        plt.fill_between(x=xx, y1=rdf['prcp_p25'], y2=rdf['prcp_p75'], color='green', linewidth=0.0, alpha=0.5)
+        plt.fill_between(x=xx, y1=rdf['prcp_p75'], y2=rdf['prcp_max'], color='cyan', linewidth=0.0, alpha=0.5)
+        plt.fill_between(x=xx, y1=rdf['prcp_max'], y2=prcp_ub, color='blue', linewidth=0.0, alpha=0.5)
+        plt.plot(xx, rdf['prcp_p50'], c='grey')
     if not cprcp.empty:
         plt.plot(cprcp.index.get_level_values('dateto'), cprcp['ytd_prcp'], c='red', linewidth=3)
     ax = plt.gca()
@@ -769,7 +770,8 @@ def cum_fillrate_plot(
         plt.plot(rdf['dateto'], rdf['fill_p50'], color='gray')
     ax = plt.gca()
     ax.set_ylim(0, 1)
-    ax.set_title(f"{stlabel}: current fill rate is {curr_fillrate:.2f} which is {100 * curr_fillrate_cdf:.0f} percentile")
+    title = f"{stlabel}: current fill rate is {curr_fillrate:.2f} which is {100 * curr_fillrate_cdf:.0f} percentile"
+    ax.set_title(title)
     ax.set_ylabel('fill rate')
     ax.grid(True)
     return f
