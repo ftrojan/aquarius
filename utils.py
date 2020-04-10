@@ -455,11 +455,12 @@ def chunker(seq, size):
 
 
 def insert_with_progress(df, engine, table_name: str, chunksize=None):
+    dfi = df.reset_index()
     if chunksize is None:
-        chunksize = int(len(df) / 10)  # 10%
-    with tqdm(total=len(df)) as pbar:
-        for i, cdf in enumerate(chunker(df, chunksize)):
-            cdf.to_sql(con=engine, name=table_name, if_exists="append")
+        chunksize = int(len(dfi) / 10)  # 10%
+    with tqdm(total=len(dfi)) as pbar:
+        for i, cdf in enumerate(chunker(dfi, chunksize)):
+            cdf.to_sql(con=engine, name=table_name, if_exists="append", index=False)
             pbar.update(chunksize)
 
 
@@ -578,7 +579,7 @@ def make_day_index(year: int) -> pd.DataFrame:
     day_index = (date_axis - zero_date).days
     calendar = pd.DataFrame({
         'year': year,
-        'dateto': date_axis,
+        'dateto': [date(d.year, d.month, d.day) for d in date_axis],
         'day_index': day_index,
     }, columns=['year', 'dateto', 'day_index'])
     # logging.debug(f"calendar with {len(date_axis)} days from {date_axis[0]} to {date_axis[-1]}")
@@ -676,7 +677,7 @@ def load_reference_quantiles(station: str, engine) -> pd.DataFrame:
 
 def calc_cumprcp(prcp: pd.DataFrame, year: int) -> pd.DataFrame:
     data_end_date = prcp.index.get_level_values('dateto')[-1]
-    cprcp = calc_reference_station_year(prcp, year)
+    cprcp = calc_reference_station_year(prcp, year)  # reuse the same code as for the reference
     cprcp.columns = ['year', 'day_index', 'prcp_mm', 'cum_prcp', 'cum_fillrate', 'ytd_prcp']
     idx = pd.IndexSlice
     return cprcp.loc[idx[:, :data_end_date], :]
@@ -816,7 +817,10 @@ def drought_rate_data(stid: str, year: int, engine=None) -> tuple:
         data_end_date = prcp.index.get_level_values('dateto')[-1]
         day_index = make_day_index(year)
         rdf = day_index.merge(refq, on='day_index', how='left') >> mask(X.dateto <= data_end_date)
-        cprcp = calc_cumprcp(prcp, year)
+        if engine is None:
+            cprcp = calc_cumprcp(prcp, year)
+        else:
+            cprcp = calc_cumprcp(prcp, year)  # TODO load from db
         if not cprcp.empty:
             curr_cprcp = cprcp.iloc[-1, :]
             curr_fillrate = curr_cprcp['cum_fillrate']
@@ -868,6 +872,116 @@ def get_stations_noref(engine) -> pd.DataFrame:
     )
     station_noref = pd.DataFrame(engine.execute(sql_noref).fetchall(), columns=cols).set_index('station')
     return station_noref
+
+
+def ded_prcp(engine) -> date:
+    sql_query = (
+        "select max(dateto) as ded\n"
+        "from prcp"
+    )
+    df = pd.DataFrame(engine.execute(sql_query).fetchall(), columns=['ded'])
+    data_end_dt = df['ded'].iat[0]
+    data_end_date = date(data_end_dt.year, data_end_dt.month, data_end_dt.day)
+    logging.debug(f"data_end_date={data_end_date}")
+    return data_end_date
+
+
+def ded_cump(engine, year: int) -> tuple:
+    sql_query = (
+        "select max(dateto) as ded, max(day_index) as dei\n"
+        "from cumprcp\n"
+        f"where year={year}"
+    )
+    df = pd.DataFrame(engine.execute(sql_query).fetchall(), columns=['ded', 'dei'])
+    data_end_dt = df['ded'].iat[0]
+    data_end_index = df['dei'].iat[0]
+    if data_end_dt is None:
+        data_end_date = None
+    else:
+        data_end_date = date(data_end_dt.year, data_end_dt.month, data_end_dt.day)
+    logging.debug(f"cump_end_date={data_end_date}")
+    return data_end_date, data_end_index
+
+
+def prcp_dateto(engine, dateto: date) -> pd.DataFrame:
+    """Select all rows from prcp table as of dateto."""
+    sql_query = f"select station, cast(prcp_mm as float) as prcp_mm from prcp where dateto=date'{dateto.isoformat()}'"
+    logging.debug(sql_query)
+    df = pd.DataFrame(engine.execute(sql_query).fetchall(), columns=['station', 'prcp_mm'])
+    return df
+
+
+def increment_cumprcp(engine, year: int, day_index: int, dateto: date):
+    """Insert new records to cumprcp for the spacified day assuming that the previous day is there."""
+    cols_previous = ['station', 'year', 'day_index', 'dateto', 'cum_days_observed', 'cum_prcp']
+    sql_previous = f"select {', '.join(cols_previous)} from cumprcp where year={year} and day_index={day_index - 1}"
+    cumprcp_previous = pd.DataFrame(engine.execute(sql_previous).fetchall(), columns=cols_previous)
+    assert not cumprcp_previous.empty
+    prcp = prcp_dateto(engine, dateto)
+    cols_both = ['station', 'year']
+    cumprcp = cumprcp_previous[cols_both].merge(prcp, how='left', on='station')
+    cumprcp['day_index'] = day_index
+    cumprcp['dateto'] = dateto
+    cumprcp['flag_observed'] = cumprcp.prcp_mm.notnull()
+    cumprcp['cum_days_observed'] = cumprcp_previous.cum_days_observed + cumprcp.flag_observed
+    cumprcp['cum_fillrate'] = cumprcp.cum_days_observed / (day_index + 1)
+    cumprcp['cum_prcp'] = cumprcp_previous.cum_prcp + cumprcp.prcp_mm.fillna(0)
+    cumprcp['cum_prcp_pred'] = cumprcp.cum_prcp / cumprcp.cum_fillrate
+    cols_out = [
+        'station',
+        'year',
+        'day_index',
+        'dateto',
+        'flag_observed',
+        'cum_days_observed',
+        'cum_fillrate',
+        'cum_prcp',
+        'cum_prcp_pred',
+    ]
+    insert_with_progress(cumprcp[cols_out], engine, table_name='cumprcp')
+
+
+def update_cumprcp(engine):
+    """Update table cumprcp if new data is available in prcp table."""
+    stations = load_stations()
+    prcp_end_date = ded_prcp(engine)
+    year = prcp_end_date.year
+    day_index = make_day_index(year)
+    cump_end_date, cump_end_index = ded_cump(engine, year)
+    if cump_end_date is None:  # create new year skeleton
+        dateto0 = day_index['dateto'].iat[0]
+        logging.debug(dateto0)
+        prcp0 = prcp_dateto(engine, dateto0)
+        cump0 = stations >> left_join(prcp0, by='station')
+        flag_observed = cump0.prcp_mm.notnull()
+        skeleton = pd.DataFrame({
+            'station': stations.index,
+            'year': year,
+            'day_index': day_index['day_index'].iat[0],
+            'dateto': dateto0,
+            'flag_observed': flag_observed,
+            'cum_days_observed': flag_observed.astype(int),
+            'cum_fillrate': flag_observed.astype(float),
+            'cum_prcp': cump0.prcp_mm.fillna(0),
+            'cum_prcp_pred': cump0.prcp_mm,
+        })
+        insert_with_progress(skeleton, engine, table_name='cumprcp')
+        cump_end_date = dateto0
+    day_index_todo = day_index.loc[(day_index.dateto > cump_end_date) & (day_index.dateto <= prcp_end_date), :]
+    for x in day_index_todo.itertuples():
+        logging.debug(x)
+        increment_cumprcp(engine, x.year, x.day_index, x.dateto)
+    logging.debug("completed")
+
+
+def do_worker_job(engine, station_id: str):
+    if station_id:
+        prcp = df_station(station_id)
+        if not prcp.empty:
+            refq = calc_reference_quantiles(prcp)
+            if not refq.empty:
+                insert_with_progress(refq, engine, table_name='reference', chunksize=2000)
+    return
 
 
 logfmt = '%(asctime)s - %(levelname)s - %(module)s.%(funcName)s#%(lineno)d - %(message)s'

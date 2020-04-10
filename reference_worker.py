@@ -14,16 +14,6 @@ def get_response(s, request_dict: dict) -> dict:
     return response_dict
 
 
-def dowork(station_id: str):
-    if station_id:
-        prcp = utils.df_station(station_id)
-        if not prcp.empty:
-            refq = utils.calc_reference_quantiles(prcp)
-            if not refq.empty:
-                utils.insert_with_progress(refq, engine, table_name='reference', chunksize=2000)
-    return
-
-
 def get_station():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, PORT))
@@ -46,16 +36,16 @@ def complete_station(station_id: str) -> bool:
 
 
 logging.basicConfig(
-        level=logging.DEBUG,
-        format=utils.logfmt,
-        handlers=[logging.StreamHandler()],
-    )
+    level=logging.DEBUG,
+    format=utils.logfmt,
+    handlers=[logging.StreamHandler()],
+)
 HOST = '127.0.0.1'
 PORT = 50007
 engine = utils.sql_engine()
 stop = False
 while not stop:
     station = get_station()
-    dowork(station)
+    engine.do_worker_job(engine, station)
     stop = complete_station(station)
 logging.debug("completed")
