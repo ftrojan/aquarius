@@ -454,8 +454,11 @@ def chunker(seq, size):
     return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
 
-def insert_with_progress(df, engine, table_name: str, chunksize=None):
-    dfi = df.reset_index()
+def insert_with_progress(df, engine, table_name: str, chunksize=None, reset_index=True):
+    if reset_index:
+        dfi = df.reset_index()
+    else:
+        dfi = df
     if chunksize is None:
         chunksize = int(len(dfi) / 10)  # 10%
     with tqdm(total=len(dfi)) as pbar:
@@ -938,7 +941,7 @@ def increment_cumprcp(engine, year: int, day_index: int, dateto: date):
         'cum_prcp',
         'cum_prcp_pred',
     ]
-    insert_with_progress(cumprcp[cols_out], engine, table_name='cumprcp')
+    insert_with_progress(cumprcp[cols_out], engine, table_name='cumprcp', reset_index=False)
 
 
 def update_cumprcp(engine):

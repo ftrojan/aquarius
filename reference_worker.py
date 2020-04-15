@@ -46,6 +46,6 @@ engine = utils.sql_engine()
 stop = False
 while not stop:
     station = get_station()
-    engine.do_worker_job(engine, station)
+    utils.do_worker_job(engine, station)
     stop = complete_station(station)
 logging.debug("completed")
