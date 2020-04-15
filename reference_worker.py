@@ -3,6 +3,7 @@ import socket
 import json
 import logging
 import utils
+import constants
 
 
 def get_response(s, request_dict: dict) -> dict:
@@ -37,7 +38,7 @@ def complete_station(station_id: str) -> bool:
 
 logging.basicConfig(
     level=logging.DEBUG,
-    format=utils.logfmt,
+    format=constants.logfmt,
     handlers=[logging.StreamHandler()],
 )
 HOST = '127.0.0.1'

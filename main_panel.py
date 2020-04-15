@@ -4,20 +4,23 @@ Main dashboard endpoint.
 Use via `panel serve main_panel.py`
 """
 import panel as pn
-import utils
 import logging
 import pandas as pd
 import datetime
+import utils
+import constants
 
 logging.basicConfig(
     level=logging.DEBUG,
-    format=utils.logfmt,
+    format=constants.logfmt,
     handlers=[logging.StreamHandler()],
 )
 stations = utils.load_stations()
 current_year = datetime.date.today().year
 totals = pd.read_csv('../../data/yearly_totals/prcp_totals.csv')
-options = list(stations['station_name'])
+tree = pd.read_csv('../../data/station/tree.csv').set_index('node_name')
+node_station = pd.read_csv('../../data/station/node_station.csv').set_index('node_name')
+options = list(tree.index)
 logging.debug(options)
 autocomplete = pn.widgets.AutocompleteInput(
     name='Autocomplete Input', options=options,
@@ -30,9 +33,9 @@ engine = utils.sql_engine()
 def p_drought_plot(autocomplete_value: str, year_value: str):
     year = int(year_value)
     if autocomplete_value and year:
-        stids = utils.get_station_ids_by_name(autocomplete_value, stations)
-        if len(stids) > 0:
-            stid = stids[0]
+        num_stations = tree.at[autocomplete_value, 'num_stations']
+        if num_stations == 1:
+            stid = node_station.loc[autocomplete_value, 'station']
             stlabel = utils.station_label(stations.loc[stid, :])
             logging.debug(f"calling drought_rate_data with stid={stid} and year={year}")
             rdf, cprcp, curr_drought_rate, curr_fillrate, curr_fillrate_cdf = \
@@ -43,8 +46,9 @@ def p_drought_plot(autocomplete_value: str, year_value: str):
             # utils.cum_fillrate_plot(stlabel, rdf, cprcp, curr_fillrate, curr_fillrate_cdf)
             row = pn.Row(f_prcp, f_totals)
         else:
+            stids = node_station.loc[autocomplete_value, 'station']
             row = pn.pane.HTML(
-                f"<center><h1>autocomplete={autocomplete_value}, no such station found</h1></center>",
+                f"<center><h1>autocomplete={autocomplete_value}, {num_stations}={len(stids)} station found</h1></center>",
                 style={
                     'background-color': '#FFF6A0',
                     'color': '#A08040',
@@ -55,9 +59,9 @@ def p_drought_plot(autocomplete_value: str, year_value: str):
                 height=150,
                 sizing_mode='stretch_width'
             )
-    else:
+    else:  # empty autocomplete or not valid year - assume world at current_year
         row = pn.pane.HTML(
-            f"<center><h1>autocomplete={autocomplete_value}</h1><h1>year={year_value}</h1></center>",
+            f"<center><h1>autocomplete={autocomplete_value}</h1><h1>year={year_value}</h1><h1>world in {current_year}</h1></center>",
             style={
                 'background-color': '#FFF6A0',
                 'color': '#A08040',

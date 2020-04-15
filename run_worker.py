@@ -1,9 +1,10 @@
 import logging
 import utils
+import constants
 
 logging.basicConfig(
     level=logging.DEBUG,
-    format=utils.logfmt,
+    format=constants.logfmt,
     handlers=[logging.StreamHandler()],
 )
 engine = utils.sql_engine()

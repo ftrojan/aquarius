@@ -21,7 +21,7 @@ from dfply import (
     arrange
 )
 from tqdm import tqdm
-from typing import Dict, List, Optional
+from typing import Tuple, Dict, List, Optional, NamedTuple
 from geopy.distance import geodesic
 from sqlalchemy import create_engine
 import matplotlib.pyplot as plt
@@ -846,21 +846,6 @@ def drought_rate_data(stid: str, year: int, engine=None) -> tuple:
     return rdf, cprcp, curr_drought_rate, curr_fillrate, curr_fillrate_cdf
 
 
-def get_station_ids_by_name(name: str, stations: pd.DataFrame) -> List[str]:
-    stid = stations.index.get_level_values('station')
-    flag_name = stations['station_name'] == name
-    if np.any(flag_name):
-        station_ids = stid[flag_name]
-    else:
-        flag_country = stations['country_name'] == name
-        if np.any(flag_country):
-            station_ids = stid[flag_country]
-        else:
-            flag_continent = stations['continent_name'] == name
-            station_ids = stid[flag_continent]
-    return station_ids
-
-
 def sql_engine():
     engine = create_engine('postgres://postgres:@localhost/ghcn')
     return engine
@@ -987,4 +972,44 @@ def do_worker_job(engine, station_id: str):
     return
 
 
-logfmt = '%(asctime)s - %(levelname)s - %(module)s.%(funcName)s#%(lineno)d - %(message)s'
+def make_station_tree(stations: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """All nodes of the stations tree are searcheable in the autocomplete by node_name."""
+
+    def node_name_station(station_record: NamedTuple) -> str:
+        name = f"{station_record.station_name} (station in {station_record.country_name})"
+        return name
+
+    def node_name_country(station_record: NamedTuple) -> str:
+        name = f"{station_record.country_name} (country in {station_record.continent_name})"
+        return name
+
+    station_name = pd.Series([node_name_station(x) for x in stations.itertuples()])
+    if station_name.is_unique:
+        logging.debug("tree nodes are unique")
+    else:
+        logging.error("tree nodes are not unique")
+        freq = station_name.value_counts()
+        ndup = np.sum(freq > 1)
+        logging.debug(f"{ndup} duplicated names")
+        for index, value in tqdm(freq[:ndup].iteritems(), total=ndup):
+            # logging.debug(f"{index}: {value}x")
+            # deduplication - add i/n at the end of each name
+            dupidx = np.flatnonzero(station_name == index)
+            for i, (idx, ndname) in enumerate(station_name.iloc[dupidx].iteritems()):
+                # logging.debug(f"{idx}: {ndname} {i+1}/{value}")
+                station_name.at[idx] = f"{ndname} {i+1}/{value}"
+    country_name = pd.Series([node_name_country(x) for x in stations.itertuples()])
+    continent_name = stations['continent_name']
+    node_name = pd.concat([station_name, country_name, continent_name], axis=0)
+    stidx = stations.index.values
+    station = np.concatenate((stidx, stidx, stidx), axis=0)
+    node_station = pd.DataFrame({
+        'node_name': node_name,
+        'station': station,
+    })
+    nvc = node_station['node_name'].value_counts()
+    tree = pd.DataFrame({
+        'node_name': nvc.index,
+        'num_stations': nvc.values,
+    })
+    return tree, node_station
