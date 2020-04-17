@@ -686,6 +686,15 @@ def calc_cumprcp(prcp: pd.DataFrame, year: int) -> pd.DataFrame:
     return cprcp.loc[idx[:, :data_end_date], :]
 
 
+def drought_index(cum_prcp: float, reference_cum_prcp: np.ndarray) -> float:
+    """Calculate drought index from the cumulative precipitation and the reference values."""
+    cdf = ECDF()
+    cdf.fit(reference_cum_prcp)
+    curr_cdf = cdf.eval(np.array(cum_prcp))
+    curr_drought_index = 2 * (0.5 - curr_cdf)
+    return curr_drought_index
+
+
 def current_drought_rate(refq: pd.DataFrame, curr_cprcp: pd.Series) -> float:
     if refq.empty:
         curr_drought_rate = np.nan
@@ -696,10 +705,7 @@ def current_drought_rate(refq: pd.DataFrame, curr_cprcp: pd.Series) -> float:
         refq_columns = ['prcp_min', 'prcp_p25', 'prcp_p50', 'prcp_p75', 'prcp_max']
         refq_prcp = refq.loc[(curr_station, curr_day_index), refq_columns].values
         if len(refq_prcp) > 0:
-            cdf = ECDF()
-            cdf.fit(refq_prcp.flatten())
-            curr_cdf = cdf.eval(curr_ytd_prcp)
-            curr_drought_rate = 2 * (0.5 - curr_cdf)
+            curr_drought_rate = drought_index(curr_ytd_prcp, refq_prcp.flatten())
         else:
             curr_drought_rate = np.nan
     return curr_drought_rate
@@ -1015,3 +1021,43 @@ def make_station_tree(stations: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFram
         'num_stations': nvc.values,
     })
     return tree, node_station
+
+
+def refresh_drought(engine):
+    """Refresh table drought from cumprcp and reference for the last day_index available."""
+    sql_year = "select max(year) from cumprcp"
+    max_year = engine.execute(sql_year).fetchone()[0]
+    logging.debug(f"max_year={max_year}")
+    sql_index = f"select max(day_index) from cumprcp where year = {max_year}"
+    max_day_index = engine.execute(sql_index).fetchone()[0]
+    logging.debug(f"max_day_index={max_day_index}")
+    last_cumprcp_cols = ["station", "cum_prcp_pred", "cum_fillrate"]
+    sql_last_cumprcp = (
+        f"select {', '.join(last_cumprcp_cols)} "
+        f"from cumprcp where year = {max_year} and day_index = {max_day_index} "
+        f"and {' and '.join([c + ' is not null' for c in last_cumprcp_cols])}"
+    )
+    logging.debug(sql_last_cumprcp)
+    last_cumprcp = pd.DataFrame(
+        engine.execute(sql_last_cumprcp).fetchall(), columns=last_cumprcp_cols
+    ).set_index('station')
+    logging.debug(f"last_cumprcp={last_cumprcp.shape}")
+    reference_prcp_cols = ["prcp_min", "prcp_p25", "prcp_p50", "prcp_p75", "prcp_max"]
+    last_reference_cols = ["station"] + reference_prcp_cols
+    sql_last_reference = (
+        f"select {', '.join(last_reference_cols)} "
+        f"from reference where day_index = {max_day_index} "
+        f"and {' and '.join([c + ' is not null' for c in reference_prcp_cols])}"
+    )
+    logging.debug(sql_last_reference)
+    last_reference = pd.DataFrame(
+        engine.execute(sql_last_reference).fetchall(), columns=last_reference_cols
+    ).set_index('station')
+    logging.debug(f"last_reference={last_reference.shape}")
+    drought = last_reference.join(last_cumprcp, how='inner')
+    logging.debug(f"drought={drought.shape}")
+    drought['drought_index'] = [drought_index(x.cum_prcp_pred, x[reference_prcp_cols]) for s, x in drought.iterrows()]
+    engine.execute("truncate table drought")
+    out_df = drought.reset_index() >> select(X.station, X.drought_index, X.cum_prcp_pred, X.cum_fillrate)
+    logging.debug(f"out_df={out_df.shape}")
+    insert_with_progress(out_df, engine, table_name='drought', reset_index=False)
