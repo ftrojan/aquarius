@@ -899,7 +899,7 @@ def prcp_dateto(engine, dateto: date) -> pd.DataFrame:
     return df
 
 
-def increment_cumprcp(engine, year: int, day_index: int, dateto: date):
+def increment_cumprcp(engine, year: int, day_index: int, dateto: date, cum_days_available: int):
     """Insert new records to cumprcp for the spacified day assuming that the previous day is there."""
     cols_previous = ['station', 'year', 'day_index', 'dateto', 'cum_days_observed', 'cum_prcp']
     sql_previous = f"select {', '.join(cols_previous)} from cumprcp where year={year} and day_index={day_index - 1}"
@@ -912,7 +912,7 @@ def increment_cumprcp(engine, year: int, day_index: int, dateto: date):
     cumprcp['dateto'] = dateto
     cumprcp['flag_observed'] = cumprcp.prcp_mm.notnull()
     cumprcp['cum_days_observed'] = cumprcp_previous.cum_days_observed + cumprcp.flag_observed
-    cumprcp['cum_fillrate'] = cumprcp.cum_days_observed / (day_index + 1)
+    cumprcp['cum_fillrate'] = cumprcp.cum_days_observed / cum_days_available
     cumprcp['cum_prcp'] = cumprcp_previous.cum_prcp + cumprcp.prcp_mm.fillna(0)
     cumprcp['cum_prcp_pred'] = cumprcp.cum_prcp / cumprcp.cum_fillrate
     cols_out = [
@@ -935,6 +935,7 @@ def update_cumprcp(engine):
     prcp_end_date = ded_prcp(engine)
     year = prcp_end_date.year
     day_index = make_day_index(year)
+    first_day_index = day_index['day_index'].iat[0]
     cump_end_date, cump_end_index = ded_cump(engine, year)
     if cump_end_date is None:  # create new year skeleton
         dateto0 = day_index['dateto'].iat[0]
@@ -945,7 +946,7 @@ def update_cumprcp(engine):
         skeleton = pd.DataFrame({
             'station': stations.index,
             'year': year,
-            'day_index': day_index['day_index'].iat[0],
+            'day_index': first_day_index,
             'dateto': dateto0,
             'flag_observed': flag_observed,
             'cum_days_observed': flag_observed.astype(int),
@@ -953,12 +954,13 @@ def update_cumprcp(engine):
             'cum_prcp': cump0.prcp_mm.fillna(0),
             'cum_prcp_pred': cump0.prcp_mm,
         })
-        insert_with_progress(skeleton, engine, table_name='cumprcp')
+        insert_with_progress(skeleton, engine, table_name='cumprcp', reset_index=False)
         cump_end_date = dateto0
     day_index_todo = day_index.loc[(day_index.dateto > cump_end_date) & (day_index.dateto <= prcp_end_date), :]
     for x in day_index_todo.itertuples():
         logging.debug(x)
-        increment_cumprcp(engine, x.year, x.day_index, x.dateto)
+        cum_days_available = x.day_index - first_day_index + 1
+        increment_cumprcp(engine, x.year, x.day_index, x.dateto, cum_days_available)
     logging.debug("completed")
 
 

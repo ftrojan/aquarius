@@ -45,7 +45,7 @@ def p_drought_plot(autocomplete_value: str, year_value: str):
             f_totals = utils.totals_barchart(dft)
             # utils.cum_fillrate_plot(stlabel, rdf, cprcp, curr_fillrate, curr_fillrate_cdf)
             row = pn.Row(f_prcp, f_totals)
-        else:
+        else:  # num_stations > 1
             stids = node_station.loc[autocomplete_value, 'station']
             row = pn.pane.HTML(
                 f"<center><h1>autocomplete={autocomplete_value}, {num_stations}={len(stids)} station found</h1></center>",

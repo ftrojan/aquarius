@@ -3,8 +3,9 @@ import pandas as pd
 import socket
 import json
 import logging
-import utils
 from datetime import datetime
+import utils
+import constants
 
 
 def send_response(response_dict: dict):
@@ -41,7 +42,7 @@ def complete_station(job: pd.DataFrame, station_completed: str) -> pd.DataFrame:
 
 logging.basicConfig(
     level=logging.INFO,
-    format=utils.logfmt,
+    format=constants.logfmt,
     handlers=[logging.StreamHandler()],
 )
 HOST = ''
