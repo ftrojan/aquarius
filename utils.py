@@ -25,6 +25,8 @@ from typing import Tuple, Dict, List, Optional, NamedTuple
 from geopy.distance import geodesic
 from sqlalchemy import create_engine
 import matplotlib.pyplot as plt
+from bokeh.plotting import figure
+from bokeh.models import HoverTool, ColumnDataSource
 
 
 class ECDF:
@@ -857,7 +859,7 @@ def sql_engine():
     return engine
 
 
-def get_stations_noref(engine) -> pd.DataFrame:
+def get_stations_noref(engine, stations: pd.DataFrame) -> pd.DataFrame:
     cols = ['station', 'dispatched_at', 'completed_at']
     sql_noref = (
         f"select {', '.join(cols)}\n"
@@ -865,7 +867,12 @@ def get_stations_noref(engine) -> pd.DataFrame:
         "where completed_at is null"
     )
     station_noref = pd.DataFrame(engine.execute(sql_noref).fetchall(), columns=cols).set_index('station')
-    return station_noref
+    station_coord = station_noref.join(stations)
+    lat = station_coord.latitude
+    lon = station_coord.longitude
+    center_point = (49.9629345, 14.0600897)  # x=14.0600897&y=49.9629345 = Beroun Vinicna 1005
+    station_coord['perimeter_km'] = np.array([geodesic(center_point, station_point).km for station_point in zip(lat, lon)])
+    return station_coord.sort_values(by='perimeter_km')
 
 
 def ded_prcp(engine) -> date:
@@ -1061,3 +1068,48 @@ def refresh_drought(engine):
     out_df = drought.reset_index() >> select(X.station, X.drought_index, X.cum_prcp_pred, X.cum_fillrate)
     logging.debug(f"out_df={out_df.shape}")
     insert_with_progress(out_df, engine, table_name='drought', reset_index=False)
+
+
+def get_drought(engine) -> pd.DataFrame:
+    cols = ["station", "drought_index", "cum_prcp_pred", "cum_fillrate"]
+    df = pd.DataFrame(engine.execute("select * from drought").fetchall(), columns=cols).set_index("station")
+    return df
+
+
+def drought_rate_plot(drought: pd.DataFrame):
+    drought = drought.sort_values(by='drought_index')
+    bar_colors = np.array(['blue', 'cyan', 'green', 'orange', 'red'])
+    drought_index_band = pd.cut(drought.drought_index, [-1.0, -0.99, -0.5, +0.5, +0.99, +1.001], right=False)
+    drought['facecolor'] = bar_colors[drought_index_band.cat.codes.values]
+    flag_dry = (drought.drought_index >= 0.5)
+    num_dry = np.sum(flag_dry)
+    drought_rate = np.mean(flag_dry)
+    src = ColumnDataSource(drought.reset_index())
+    p = figure(
+        plot_width=1600,
+        plot_height=600,
+        title=f"Drought rate is {100 * drought_rate:.0f}%={num_dry}/{len(drought)}.",
+        y_axis_label="Drought Index",
+        x_axis_label="Station Rank by Drought Index",
+    )
+    p.vbar(
+        x="index",
+        top="drought_index",
+        width=0.8,
+        alpha="cum_fillrate",
+        fill_color="facecolor",
+        line_color=None,
+        source=src)
+    p.y_range.start = -1.0
+    p.y_range.end = +1.0
+    ttp = [
+        ("cum_prcp_predicted", "@cum_prcp_pred{00.}"),
+        ("cum_fillrate", "@cum_fillrate{0.00}"),
+        ("id", "@station"),
+        ("station", "@station_name"),
+        ("country", "@country_name"),
+        ("el", "@elevation{0.}"),
+    ]
+    p.add_tools(HoverTool(tooltips=ttp))
+    p.xgrid.grid_line_color = None
+    return p

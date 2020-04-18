@@ -1,4 +1,8 @@
-"""Worker asks for a station to calculate, calculates, saves to db and asks again, until gets input"""
+"""
+Worker asks for a station to calculate, calculates, saves to db and asks again, until gets input.
+
+It is for calculation of the reference table.
+"""
 import socket
 import json
 import logging

@@ -1,4 +1,8 @@
-"""Dispatcher responds with station numbers not calculated yet until no such remain."""
+"""
+Dispatcher responds with station numbers not calculated yet until no such remain.
+
+It is for calculation of the reference table.
+"""
 import pandas as pd
 import socket
 import json
@@ -40,6 +44,11 @@ def complete_station(job: pd.DataFrame, station_completed: str) -> pd.DataFrame:
     return job
 
 
+def get_perimeter(stdf: pd.DataFrame) -> float:
+    perimeter = stdf.perimeter_km[stdf.dispatched_at.isnull()].min()
+    return perimeter
+
+
 logging.basicConfig(
     level=logging.INFO,
     format=constants.logfmt,
@@ -48,10 +57,13 @@ logging.basicConfig(
 HOST = ''
 PORT = 50007
 engine = utils.sql_engine()
-stations_todo = utils.get_stations_noref(engine)
+stations = utils.load_stations()
+logging.info("calculating stations TODO with perimeter")
+stations_todo = utils.get_stations_noref(engine, stations)
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((HOST, PORT))
-    logging.info(f"server listening on {HOST} {PORT}, {len(stations_todo)} stations todo")
+    pm = get_perimeter(stations_todo)
+    logging.info(f"server listening on {HOST} {PORT}, {len(stations_todo)} stations todo, perimeter={pm:.1f}km.")
     while stations_todo['dispatched_at'].isnull().sum() > 0:  # after one request is served, listen for another one
         s.listen(1)
         conn, addr = s.accept()
@@ -59,7 +71,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             logging.debug(f"Connected by {addr}")
             while True:  # until the socket is terminated by the worker
                 num_todo = stations_todo['dispatched_at'].isnull().sum()
-                logging.info(f"{num_todo} stations todo")
+                logging.debug(f"{num_todo} stations todo")
                 reqdata = conn.recv(1024)
                 if not reqdata:
                     break
@@ -73,5 +85,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 elif command == 'complete_station':
                     station = request['station']
                     stations_todo = complete_station(stations_todo, station)
+                    logging.info(f"{num_todo} stations todo, perimeter={get_perimeter(stations_todo):.1f}km.")
                     response = {'station': station, 'completed': True}
                     send_response(response)
