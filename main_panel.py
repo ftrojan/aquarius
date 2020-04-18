@@ -27,6 +27,7 @@ autocomplete = pn.widgets.AutocompleteInput(
     placeholder='Station, Country or Continent')
 input_year = pn.widgets.TextInput(name='Year', value=str(current_year))
 engine = utils.sql_engine()
+drought = utils.get_drought(engine).join(stations)
 
 
 @pn.depends(autocomplete.param.value, input_year.param.value)
@@ -46,19 +47,25 @@ def p_drought_plot(autocomplete_value: str, year_value: str):
             # utils.cum_fillrate_plot(stlabel, rdf, cprcp, curr_fillrate, curr_fillrate_cdf)
             row = pn.Row(f_prcp, f_totals)
         else:  # num_stations > 1
-            stids = node_station.loc[autocomplete_value, 'station']
-            row = pn.pane.HTML(
-                f"<center><h1>autocomplete={autocomplete_value}, {num_stations}={len(stids)} station found</h1></center>",
-                style={
-                    'background-color': '#FFF6A0',
-                    'color': '#A08040',
-                    'border': '2px solid green',
-                    'border-radius': '5px',
-                    'padding': '10px'},
-                width=800,
-                height=150,
-                sizing_mode='stretch_width'
-            )
+            stids = node_station.loc[autocomplete_value, ['station']]
+            max_stations = 200
+            if num_stations <= max_stations:
+                df = stids.set_index('station').join(drought)
+                p = utils.drought_rate_plot(df)
+                row = pn.pane.Bokeh(p)
+            else:
+                row = pn.pane.HTML(
+                    f"<center><h1>autocomplete={autocomplete_value}, {num_stations}>{max_stations} stations found</h1></center>",
+                    style={
+                        'background-color': '#FFF6A0',
+                        'color': '#A08040',
+                        'border': '2px solid green',
+                        'border-radius': '5px',
+                        'padding': '10px'},
+                    width=800,
+                    height=150,
+                    sizing_mode='stretch_width'
+                )
     else:  # empty autocomplete or not valid year - assume world at current_year
         row = pn.pane.HTML(
             f"<center><h1>autocomplete={autocomplete_value}</h1><h1>year={year_value}</h1><h1>world in {current_year}</h1></center>",
