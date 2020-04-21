@@ -18,7 +18,8 @@ from dfply import (
     select,
     left_join,
     ungroup,
-    arrange
+    arrange,
+    mutate,
 )
 from tqdm import tqdm
 from typing import Tuple, Dict, List, Optional, NamedTuple
@@ -495,9 +496,9 @@ def extract_one_prcp_to_sql(filename: str, by_year_path: str, engine, table_name
     if (~df_joined['indb']).sum() > 0:
         df_filtered = df_joined >> mask(~X.indb)
         df_increment = df_filtered >> select(X.prcp_mm)
-        logging.debug("sql insert in progress")
+        logging.debug(f"sql insert to {table_name} in progress")
         insert_with_progress(df_increment, engine, table_name, chunksize=100)
-        logging.debug("insert completed")
+        logging.debug(f"insert to {table_name} completed")
     else:
         logging.debug("increment is empty")
 
@@ -1276,3 +1277,23 @@ def drought_rate_plot_agg(drought: pd.DataFrame, agg_stations=50):
     aggd = drought_add_facecolor(aggd)
     p = drought_rate_plot_core(aggd, drought_stats, ttp)
     return p
+
+
+def update_yearly_totals(year: int):
+    prcp_path = '../../data/prcp'
+    out_file = '../../data/yearly_totals/prcp_totals.csv'
+    logging.debug(f"current_year={year}")
+    prcp = df_prcp(year, prcp_path)
+    totals = prcp >> group_by(X.station) >> summarize(
+        prcp_mm=X.prcp.sum(),
+        observed_days=n(X.prcp),
+    ) >> mutate(year=year)
+    logging.debug(f"{len(totals)} totals calculated")
+    df1 = pd.read_csv(out_file)
+    logging.debug(f"{len(df1)} records read from {out_file}")
+    df2 = df1 >> mask(X.year < year)
+    logging.debug(f"{len(df2)} records after deleting year {year}")
+    logging.debug(f"{len(totals)} records of current year {year} to be added")
+    df_totals = pd.concat([df2, totals], axis=0).sort_values(by=['station', 'year'])
+    df_totals.to_csv(out_file, index=False)
+    logging.debug(f"{len(df_totals)} records saved to {out_file}")
