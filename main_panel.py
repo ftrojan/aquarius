@@ -44,10 +44,11 @@ def p_drought_plot(autocomplete_value: str, year_value: str):
             rdf, cprcp, curr_drought_rate, curr_fillrate, curr_fillrate_cdf = \
                 utils.drought_rate_data(stid, year, engine=engine)
             f_prcp = utils.cum_prcp_plot(stlabel, rdf, cprcp, curr_drought_rate)
+            b_prcp = pn.pane.Bokeh(f_prcp)
             dft = totals.loc[totals['station'] == stid, :]
             f_totals = utils.totals_barchart(dft)
             # utils.cum_fillrate_plot(stlabel, rdf, cprcp, curr_fillrate, curr_fillrate_cdf)
-            row = pn.Row(f_prcp, f_totals)
+            row = pn.Row(b_prcp, f_totals)
         else:  # num_stations > 1
             stids = node_station.loc[autocomplete_value, ['station']]
             df = stids.set_index('station').join(drought, how='inner')
@@ -62,7 +63,30 @@ def p_drought_plot(autocomplete_value: str, year_value: str):
     return row
 
 
+@pn.depends(autocomplete.param.value)
+def p_id(autocomplete_value: str):
+    if autocomplete_value:
+        num_stations = tree.at[autocomplete_value, 'num_stations']
+        if num_stations == 1:
+            stid = node_station.loc[autocomplete_value, 'station']
+            result = pn.pane.HTML(
+                stid,
+                style={
+                    'background-color': '#FFF6A0',
+                    'color': '#A08040',
+                    'border': '2px solid green',
+                    'border-radius': '5px',
+                    'padding': '10px',
+                },
+            )
+        else:  # num_stations > 1
+            result = None
+    else:  # empty autocomplete or not valid year - assume world at current_year
+        result = None
+    return result
+
+
 controls = pn.Row(autocomplete, input_year)
-app = pn.Column(controls, p_drought_plot)
+app = pn.Column(controls, p_drought_plot, p_id)
 app.show()
 app.servable()

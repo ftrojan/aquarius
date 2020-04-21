@@ -26,7 +26,7 @@ from geopy.distance import geodesic
 from sqlalchemy import create_engine
 import matplotlib.pyplot as plt
 from bokeh.plotting import figure
-from bokeh.models import HoverTool, ColumnDataSource
+from bokeh.models import HoverTool, ColumnDataSource, VArea, Line, VBar
 
 
 class ECDF:
@@ -741,12 +741,20 @@ def nice_ylim(y: float) -> float:
     return ub
 
 
-def cum_prcp_plot(
+def cum_prcp_plot_matplotlib(
         stlabel: str,
         rdf: pd.DataFrame,
         cprcp: pd.DataFrame,
         curr_drought_rate: float
 ):
+    """
+    Plot cumulative precipitation with Matplotlib. Deprecated in favor of cum_prcp_plot.
+    :param stlabel:
+    :param rdf:
+    :param cprcp:
+    :param curr_drought_rate:
+    :return:
+    """
     f = plt.figure(figsize=(12, 12))
     if not rdf.empty and rdf['prcp_min'].notnull().sum() > 0:
         prcp_ub = nice_ylim(rdf['prcp_max'].iloc[-1])
@@ -764,6 +772,70 @@ def cum_prcp_plot(
     ax.set_ylabel('3rd year cumulative precipitation in mm')
     ax.grid(True)
     return f
+
+
+def cum_prcp_plot(
+        stlabel: str,
+        rdf: pd.DataFrame,
+        cprcp: pd.DataFrame,
+        curr_drought_rate: float
+):
+    """
+    Plot cumulative precipitation with Bokeh.
+    :param stlabel:
+    :param rdf:
+    :param cprcp:
+    :param curr_drought_rate:
+    :return:
+    """
+    src_ref = ColumnDataSource(rdf)
+    src_cur = ColumnDataSource(cprcp.reset_index())
+    p = figure(
+        plot_width=800,
+        plot_height=800,
+        title=f"{stlabel}: current drought index is {100 * curr_drought_rate:.0f}%",
+        y_axis_label="3rd year cumulative precipitation in mm",
+        x_axis_type='datetime',
+    )
+    if not rdf.empty and rdf['prcp_min'].notnull().sum() > 0:
+        prcp_ub = nice_ylim(rdf['prcp_max'].iloc[-1])
+        amin = VArea(x="dateto", y1=0, y2="prcp_min", fill_color="red", fill_alpha=0.5)
+        ap25 = VArea(x="dateto", y1="prcp_min", y2="prcp_p25", fill_color="orange", fill_alpha=0.5)
+        ap50 = VArea(x="dateto", y1="prcp_p25", y2="prcp_p75", fill_color="green", fill_alpha=0.5)
+        ap75 = VArea(x="dateto", y1="prcp_p75", y2="prcp_max", fill_color="cyan", fill_alpha=0.5)
+        amax = VArea(x="dateto", y1="prcp_max", y2=prcp_ub, fill_color="blue", fill_alpha=0.5)
+        lp50 = Line(x="dateto", y="prcp_p50", line_color='grey', line_width=3)
+        p.add_glyph(src_ref, amin)
+        p.add_glyph(src_ref, ap25)
+        p.add_glyph(src_ref, ap50)
+        p.add_glyph(src_ref, ap75)
+        p.add_glyph(src_ref, amax)
+        rref = p.add_glyph(src_ref, lp50)
+        ttp_ref = [
+            ("Date", "@dateto{%F}"),
+            ("Day Index", "@day_index"),
+            ("Precipitation min", "@prcp_min{0.}"),
+            ("Precipitation p25", "@prcp_p25{0.}"),
+            ("Precipitation p50", "@prcp_p50{0.}"),
+            ("Precipitation p75", "@prcp_p75{0.}"),
+            ("Precipitation max", "@prcp_max{0.}"),
+        ]
+        hover_ref = HoverTool(renderers=[rref], tooltips=ttp_ref, formatters={"@dateto": "datetime"})
+        p.add_tools(hover_ref)
+    if not cprcp.empty:
+        lcur = Line(x='dateto', y='ytd_prcp', line_color='red', line_width=3)
+        rcur = p.add_glyph(src_cur, lcur)
+        ttp_cur = [
+            ("Date", "@dateto{%F}"),
+            ("Day Index", "@day_index"),
+            ("Precipitation that day (mm)", "@prcp_mm{0.}"),
+            ("Precipitation 3rd year cumulative observed (mm)", "@cum_prcp{0.}"),
+            ("Fill rate 3rd year cumulative", "@cum_fillrate{0.000}"),
+            ("Precipitation 3rd year cumulative predicted (mm)", "@ytd_prcp{0.}"),
+        ]
+        hover_cur = HoverTool(renderers=[rcur], tooltips=ttp_cur, formatters={"@dateto": "datetime"})
+        p.add_tools(hover_cur)
+    return p
 
 
 def cum_fillrate_plot(
@@ -789,7 +861,8 @@ def cum_fillrate_plot(
     return f
 
 
-def totals_barchart(dfy: pd.DataFrame):
+def totals_barchart_matplotlib(dfy: pd.DataFrame):
+    """Deprecated in favor of totals_barchart."""
     f = plt.figure(figsize=(12, 12))
     ax = plt.gca()
     ax.set_ylabel("annual precipitation in mm")
@@ -815,6 +888,41 @@ def totals_barchart(dfy: pd.DataFrame):
             fontsize='x-large',
             color='blue',
         )
+    return f
+
+
+def totals_barchart(df: pd.DataFrame):
+    dfy = df.copy()
+    dfy['prcp_mm'] = df.prcp_mm / 10
+    dfy['available_days'] = 365 + (dfy.year % 4 == 0)
+    dfy['fill_rate'] = dfy.observed_days / dfy.available_days
+    dfy['prcp_pred'] = dfy.prcp_mm / dfy.fill_rate
+    prcp_pred_mean = dfy.prcp_pred.mean()
+    dfy['prcp_pred_mean'] = prcp_pred_mean
+    f = figure(
+        plot_width=800,
+        plot_height=800,
+        title=f"Yearly precipitation totals, mean={prcp_pred_mean:.0f}mm",
+        y_axis_label="annual precipitation in mm",
+    )
+    if not dfy.empty:
+        src = ColumnDataSource(dfy)
+        bobs = VBar(x='year', top='prcp_mm', fill_color='blue', line_color='blue', width=0.8)
+        bpre = VBar(x='year', bottom='prcp_mm', top='prcp_pred', fill_color='lightblue', line_color='blue', width=0.8)
+        lpre = Line(x='year', y='prcp_pred_mean', line_color='darkblue', line_width=3)
+        f.add_glyph(src, bobs)
+        f.add_glyph(src, bpre)
+        f.add_glyph(src, lpre)
+        ttp = [
+            ("Year", "@year"),
+            ("Precipitation observed (mm)", "@prcp_mm{0.}"),
+            ("Observed days", "@observed_days"),
+            ("Available days", "@available_days"),
+            ("Fill rate", "@fill_rate{0.000}"),
+            ("Precipitation predicted (mm)", "@prcp_pred{0.}"),
+        ]
+        hover_tool = HoverTool(tooltips=ttp)
+        f.add_tools(hover_tool)
     return f
 
 
@@ -1149,7 +1257,7 @@ def drought_rate_plot(drought: pd.DataFrame):
         ("id", "@station"),
         ("station", "@station_name"),
         ("country", "@country_name"),
-        ("el", "@elevation{0.}"),
+        ("elevation", "@elevation{0.}"),
     ]
     plotdf = drought.sort_values(by='drought_index').reset_index()
     plotdf = drought_add_facecolor(plotdf)
