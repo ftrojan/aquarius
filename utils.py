@@ -1081,7 +1081,10 @@ def get_drought_stats(drought: pd.DataFrame) -> tuple:
     flag_dry = (drought.drought_index >= 0.5)
     num_dry = np.sum(flag_dry)
     num_stations = len(drought)
-    drought_rate = num_dry / num_stations
+    if num_stations > 0:
+        drought_rate = num_dry / num_stations
+    else:
+        drought_rate = np.nan
     return num_stations, num_dry, drought_rate
 
 
@@ -1090,11 +1093,14 @@ def aggregate_drought(drought: pd.DataFrame, agg_stations=50) -> pd.DataFrame:
     drought = drought.sort_values(by='drought_index')
     num_stations = len(drought)
     bucket_size = np.ceil(num_stations / agg_stations)
-    drought['bucket_mark'] = np.minimum((np.arange(0, num_stations) // bucket_size + 1) * bucket_size, num_stations)
+    drought['bucket_mark'] = (np.arange(0, num_stations) // bucket_size + 1) * bucket_size
     aggd = drought >> group_by(X.bucket_mark) >> summarize(
         drought_index=X.drought_index.mean(),
+        cum_fillrate=X.cum_fillrate.mean(),
         bucket_size=n(X.drought_index),
     )
+    aggd = aggd.set_index('bucket_mark')
+    aggd.index = aggd.index.set_names('index')
     return aggd
 
 
@@ -1103,6 +1109,10 @@ def drought_add_facecolor(drought: pd.DataFrame) -> pd.DataFrame:
     bar_colors = np.array(['blue', 'cyan', 'green', 'orange', 'red'])
     drought_index_band = pd.cut(drought.drought_index, [-1.0, -0.99, -0.5, +0.5, +0.99, +1.001], right=False)
     drought['facecolor'] = bar_colors[drought_index_band.cat.codes.values]
+    if "bucket_size" in drought.columns:
+        drought['barwidth'] = drought['bucket_size'] * 0.8
+    else:
+        drought['barwidth'] = 0.8
     return drought
 
 
@@ -1119,7 +1129,7 @@ def drought_rate_plot_core(drought: pd.DataFrame, drought_stats: tuple, tooltips
     p.vbar(
         x="index",
         top="drought_index",
-        width=0.8,
+        width="barwidth",
         alpha="cum_fillrate",
         fill_color="facecolor",
         line_color=None,
@@ -1141,16 +1151,20 @@ def drought_rate_plot(drought: pd.DataFrame):
         ("country", "@country_name"),
         ("el", "@elevation{0.}"),
     ]
-    p = drought_rate_plot_core(drought, drought_stats, ttp)
+    plotdf = drought.sort_values(by='drought_index').reset_index()
+    plotdf = drought_add_facecolor(plotdf)
+    p = drought_rate_plot_core(plotdf, drought_stats, ttp)
     return p
 
 
-def drought_rate_plot_agg(drought: pd.DataFrame):
+def drought_rate_plot_agg(drought: pd.DataFrame, agg_stations=50):
     drought_stats = get_drought_stats(drought)
-    aggd = aggregate_drought(drought)
+    aggd = aggregate_drought(drought, agg_stations=agg_stations)
     ttp = [
-        ("Mean drought index", "@drought_index{00.}"),
+        ("Mean drought index", "@drought_index{0.000}"),
         ("Bucket size", "@bucket_size"),
+        ("Mean fill rate", "@cum_fillrate{0.000}"),
     ]
+    aggd = drought_add_facecolor(aggd)
     p = drought_rate_plot_core(aggd, drought_stats, ttp)
     return p

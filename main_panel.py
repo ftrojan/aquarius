@@ -33,6 +33,8 @@ drought = utils.get_drought(engine).join(stations)
 @pn.depends(autocomplete.param.value, input_year.param.value)
 def p_drought_plot(autocomplete_value: str, year_value: str):
     year = int(year_value)
+    max_stations = 2000
+    agg_stations = 100
     if autocomplete_value and year:
         num_stations = tree.at[autocomplete_value, 'num_stations']
         if num_stations == 1:
@@ -48,15 +50,14 @@ def p_drought_plot(autocomplete_value: str, year_value: str):
             row = pn.Row(f_prcp, f_totals)
         else:  # num_stations > 1
             stids = node_station.loc[autocomplete_value, ['station']]
-            df = stids.set_index('station').join(drought).reset_index()
-            max_stations = 200
+            df = stids.set_index('station').join(drought, how='inner')
             if num_stations <= max_stations:
                 p = utils.drought_rate_plot(df)
             else:
-                p = utils.drought_rate_plot_agg(df)
+                p = utils.drought_rate_plot_agg(df, agg_stations)
             row = pn.pane.Bokeh(p)
     else:  # empty autocomplete or not valid year - assume world at current_year
-        p = utils.drought_rate_plot_agg(drought)
+        p = utils.drought_rate_plot_agg(drought, agg_stations)
         row = pn.pane.Bokeh(p)
     return row
 
