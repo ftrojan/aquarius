@@ -33,33 +33,38 @@ drought = utils.get_drought(engine).join(stations)
 @pn.depends(autocomplete.param.value, input_year.param.value)
 def p_drought_plot(autocomplete_value: str, year_value: str):
     year = int(year_value)
-    max_stations = 2000
+    max_stations = 200000
     agg_stations = 100
     if autocomplete_value and year:
         num_stations = tree.at[autocomplete_value, 'num_stations']
+        stid = node_station.loc[[autocomplete_value], :]
+        df = stid.set_index('station').join(drought, how='inner')
+        plotdf = utils.drought_add_facecolor(df)
+        bokeh_map = utils.drought_map(plotdf)
         if num_stations == 1:
-            stid = node_station.loc[autocomplete_value, 'station']
-            stlabel = utils.station_label(stations.loc[stid, :])
-            logging.debug(f"calling drought_rate_data with stid={stid} and year={year}")
+            station = stid.station[0]
+            stlabel = utils.station_label(stations.loc[station, :])
+            logging.debug(f"calling drought_rate_data with stid={station} and year={year}")
             rdf, cprcp, curr_drought_rate, curr_fillrate, curr_fillrate_cdf = \
-                utils.drought_rate_data(stid, year, engine=engine)
+                utils.drought_rate_data(station, year, engine=engine)
             f_prcp = utils.cum_prcp_plot(stlabel, rdf, cprcp, curr_drought_rate)
             b_prcp = pn.pane.Bokeh(f_prcp)
-            dft = totals.loc[totals['station'] == stid, :]
+            dft = totals.loc[totals['station'] == station, :]
             f_totals = utils.totals_barchart(dft)
             # utils.cum_fillrate_plot(stlabel, rdf, cprcp, curr_fillrate, curr_fillrate_cdf)
-            row = pn.Row(b_prcp, f_totals)
+            row1 = pn.Row(b_prcp, f_totals)
+            row = pn.Column(row1, pn.pane.Bokeh(bokeh_map))
         else:  # num_stations > 1
-            stids = node_station.loc[autocomplete_value, ['station']]
-            df = stids.set_index('station').join(drought, how='inner')
             if num_stations <= max_stations:
-                p = utils.drought_rate_plot(df)
+                p = utils.drought_rate_plot(plotdf)
             else:
-                p = utils.drought_rate_plot_agg(df, agg_stations)
-            row = pn.pane.Bokeh(p)
+                p = utils.drought_rate_plot_agg(plotdf, agg_stations)
+            row = pn.Column(pn.pane.Bokeh(p), pn.pane.Bokeh(bokeh_map))
     else:  # empty autocomplete or not valid year - assume world at current_year
-        p = utils.drought_rate_plot_agg(drought, agg_stations)
-        row = pn.pane.Bokeh(p)
+        plotdf = utils.drought_add_facecolor(drought)
+        bokeh_map = utils.drought_map(plotdf)
+        p = utils.drought_rate_plot(drought)
+        row = pn.Column(pn.pane.Bokeh(p), pn.pane.Bokeh(bokeh_map))
     return row
 
 
@@ -82,7 +87,16 @@ def p_id(autocomplete_value: str):
         else:  # num_stations > 1
             result = None
     else:  # empty autocomplete or not valid year - assume world at current_year
-        result = None
+        result = pn.pane.HTML(
+            'Source: <a href="https://www.ncdc.noaa.gov/ghcn-daily-description">GHCN</a>',
+            style={
+                'background-color': '#FFF6A0',
+                'color': '#A08040',
+                'border': '2px solid green',
+                'border-radius': '5px',
+                'padding': '10px',
+            },
+        )
     return result
 
 

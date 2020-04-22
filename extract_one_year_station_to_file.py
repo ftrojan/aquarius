@@ -11,7 +11,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 year = 2019
-station = 'EZ000011464'
+station = 'SPE00120323'
 logging.debug(f"extraction started for year={year} and station={station}")
 filename = f"{year}.csv.gz"
 by_year_path = '../../data/by_year'

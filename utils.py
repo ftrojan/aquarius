@@ -28,6 +28,7 @@ from sqlalchemy import create_engine
 import matplotlib.pyplot as plt
 from bokeh.plotting import figure
 from bokeh.models import HoverTool, ColumnDataSource, VArea, Line, VBar
+from bokeh.tile_providers import get_provider, STAMEN_TERRAIN
 
 
 class ECDF:
@@ -1261,7 +1262,6 @@ def drought_rate_plot(drought: pd.DataFrame):
         ("elevation", "@elevation{0.}"),
     ]
     plotdf = drought.sort_values(by='drought_index').reset_index()
-    plotdf = drought_add_facecolor(plotdf)
     p = drought_rate_plot_core(plotdf, drought_stats, ttp)
     return p
 
@@ -1297,3 +1297,60 @@ def update_yearly_totals(year: int):
     df_totals = pd.concat([df2, totals], axis=0).sort_values(by=['station', 'year'])
     df_totals.to_csv(out_file, index=False)
     logging.debug(f"{len(df_totals)} records saved to {out_file}")
+
+
+def wgs84_epsg3857(wgs84: tuple) -> tuple:
+    """
+    Convert (longitude, latitude) coordinates in WGS84 to EPSG 3857 Mercator coordinates.
+
+    See https://epsg.io/3857 for the definition.
+    See https://epsg.io/transform#s_srs=4326&t_srs=3857&x=-4.2325468&y=50.4211273 to check.
+    """
+    lon, lat = wgs84
+    r_major = 6378137.000
+    x = r_major * np.radians(lon)
+    scale = x / lon
+    y = 180.0 / np.pi * np.log(np.tan(np.pi / 4.0 + lat * (np.pi / 180.0) / 2.0)) * scale
+    return x, y
+
+
+def good_map_limits(x: pd.Series, margin_rel=0.1, margin_abs=50e3) -> tuple:
+    """Calculate good map limits for the given dimesion."""
+    xmin = x.min()
+    xmax = x.max()
+    xdel = xmax - xmin
+    xoff = max(margin_rel * xdel, margin_abs)
+    return xmin - xoff, xmax + xoff
+
+
+def drought_map(dfm: pd.DataFrame):
+    """Draw Bokeh map of points"""
+    dfm['alpha'] = 0.3 + 0.7 * dfm.cum_fillrate.fillna(0)
+    xy = [wgs84_epsg3857((s.longitude, s.latitude)) for s in dfm.itertuples()]
+    dfm['x'] = [t[0] for t in xy]
+    dfm['y'] = [t[1] for t in xy]
+    tile_provider = get_provider(STAMEN_TERRAIN)
+    xrange = good_map_limits(dfm.x)
+    yrange = good_map_limits(dfm.y)
+    col_source = ColumnDataSource(dfm)
+    p = figure(
+        plot_width=1600,
+        plot_height=800,
+        x_range=xrange,
+        y_range=yrange,
+        x_axis_type="mercator",
+        y_axis_type="mercator",
+    )
+    p.add_tile(tile_provider)
+    p.circle(x='x', y='y', size=15, color='facecolor', alpha='alpha', source=col_source)
+    ttp = [
+        ("cum_prcp_predicted", "@cum_prcp_pred{00.}"),
+        ("cum_fillrate", "@cum_fillrate{0.00}"),
+        ("id", "@station"),
+        ("station", "@station_name"),
+        ("country", "@country_name"),
+        ("elevation", "@elevation{0.}"),
+    ]
+    hover_tool = HoverTool(tooltips=ttp)
+    p.add_tools(hover_tool)
+    return p
