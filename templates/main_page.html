@@ -3,9 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <title>Aquarius</title>
+    {{ js_resources|indent(4)|safe }}
+    {{ css_resources|indent(4)|safe }}
+    {{ script_drought|indent(4)|safe }}
+    {{ script_map|indent(4)|safe }}
 </head>
 <body>
-    <h1>Aquarius</h1>
+    {{ div_drought|indent(4)|safe }}
+    {{ div_map|indent(4)|safe }}
     <ul>
         {% for station in stations.itertuples() %}
         <li><a href="station_detail/station_id={{station.Index}}" target="_blank">Station {{station.station_name}}</a></li>
