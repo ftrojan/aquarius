@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Aquarius</title>
+</head>
+<body>
+    <h1>Aquarius</h1>
+    <a href={{url_bokeh}}>Bokeh example</a>
+    <ul>
+        {% for station in stations.itertuples() %}
+        <li><a href="station_detail/station_id={{station.Index}}" target="_blank">Station {{station.station_name}}</a></li>
+        {% endfor %}
+    </ul>
+</body>
+</html>

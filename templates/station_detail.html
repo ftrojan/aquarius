@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Station detail {{station.name}}</title>
+    <style>
+        .row {
+          width: 100%;
+          display: flex;
+          flex-direction: row;
+          justify-content: center;
+        }
+    </style>
+    {{ js_resources|indent(4)|safe }}
+    {{ css_resources|indent(4)|safe }}
+    {{ plot_script|indent(4)|safe }}
+    {{ plot_script_totals|indent(4)|safe }}
+</head>
+<body>
+    <h1>Detail for station {{station.country_name}}/{{station.station_name}}</h1>
+    <div class="row">
+        {{ plot_div|indent(4)|safe }}
+        {{ plot_totals|indent(4)|safe }}
+    </div>
+    <a href={{url_back}}>Main page</a>
+</body>
+</html>

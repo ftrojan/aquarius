@@ -9,3 +9,4 @@ sqlalchemy
 tqdm
 dask
 bokeh
+flask
