@@ -30,7 +30,6 @@ def index():
     return render_template(
         'main_page.html',
         stations=cz,
-        url_bokeh=url_for('bokeh')
     )
 
 

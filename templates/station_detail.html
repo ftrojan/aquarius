@@ -17,11 +17,10 @@
     {{ plot_script_totals|indent(4)|safe }}
 </head>
 <body>
-    <h1>Detail for station {{station.country_name}}/{{station.station_name}}</h1>
     <div class="row">
         {{ plot_div|indent(4)|safe }}
         {{ plot_totals|indent(4)|safe }}
     </div>
-    <a href={{url_back}}>Main page</a>
+    Back to <a href={{url_back}}>main page</a>
 </body>
 </html>
